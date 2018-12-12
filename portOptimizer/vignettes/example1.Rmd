@@ -1,0 +1,55 @@
+---
+title: "portOptimizer Example 1"
+author: "Vignette Author"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+`portOptimizer` was created to handle complex portfolio optimization with problems of moderate size (number of assets <=100).  
+
+Efficient portfolios provide the highest return for a given level of risk and satisfy other constraints.  `portOptimizer` is designed to provide flexibility regarding the complexity of the problem.  This example illustrates the flexibility of `portOptimizer`: It maximizes return subject to the following constraints:
+
+- Minimum and Maximum weights in each asset class.    
+- Maximum risk (absolute) is specified by an expected risk.  This might be either a number or the expected risk of a benchmark. 
+- Maximum tracking error (relative risk) relative to a benchmark.
+- Minimum and Maximum number assets.  
+- Maximum turnover is the difference from the weightings of the optimal portfolio and the current holdings.  Selling all current holdings to buy new holdings would be a turnover of 100%.
+- Minimum non-zero weight controls the minimum for a position size if there's a non-zero weight to the asset class. For example, perhaps if you are going to invest in an asset you want to allocate a minimum of 3% to it; otherwise it's a nuisance.  This constraint is ignored for asset classes with a minimum below this setting.  So if you indicate you want at least 2% in Cash, it will allow a 2% Cash position even if the Minimum non-zero weight parameter is 3%. 
+- User defined constraints allow great flexibility to control the relative weights of one or more assets in the portfolio.  For example, a US investor with a domestic bias might require US Stocks to be at least 40% of all stocks in the portfolio.  These are specified when setting the cma.
+- Class group constraints allow the weighting of one or more assets to be within a range of a benchmark weight.  For example, the portfolio equities might be constrainted to be within +/- 10% of the benchmark so that if the benchmark is 60% the portfolio's equity may range from 50% to 70%.
+
+# The Objective Function
+
+The main work on the user's part is to create an R function that takes in a set of asset weights (x) and returns a value.  portOptimizer tries to find the x that maximizes the value returned by the function.  In general, the objective function will look something like this:
+
+calculate_my_objective_value <- function(x, expectedReturns, covmat, benchx, maxsigma, maxtracking, minnassets, maxnassets){
+  port_return  <- sum(x * expectedReturns)
+  port_sigma <- (max(0, t(x) %*% cma$cov %*% x)) ^ 0.5
+  bench_sigma <- (max(0, t((x - benchx)) %*% cma$cov %*% (x - benchx))) ^ 0.5
+  nnonzeroassets <- x != 0
+  
+  penalties <-  (ifelse(port_sigma <= maxsigma, 0, (port_sigma - maxsigma)^2) +
+                ifelse(bench_sigma <= maxtracking, 0, (bench_sigma - maxtracking)^2) + 
+                ifelse(nnonzeroassets > minnassets, 0, (nnonzeroassets - minnassets)^2) +
+                ifelse(nnonzeroassets > maxnassets, 0, (nnonzeroassets - maxnassets)^2)) *
+                25000000
+  out <- port_return - penalties
+  return(out)
+}
+
+Important things to note about the objective function:
+- the first paramater, x is a set of weights for the portfolio.  It should sum to 1 or whatever value you want the sum of the weights to be.
+- it returns a number.
+- it has as many other parameters as you like.
+- the constraints of the problem are treated as penalties.  If a constraint is satisfied, it contributes zero to the penalty. If non-zero it should be squared to produce a positive value.  Penalties are multiplied by a very large value (we use 25 billion). 
