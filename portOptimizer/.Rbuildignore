@@ -1,2 +1,5 @@
+^Meta$
+^doc$
 ^portOptimizer\.Rproj$
 ^\.Rproj\.user$
+^\R\importRAFI.r$
