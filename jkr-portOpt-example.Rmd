@@ -1,0 +1,316 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Notes to Rex: 
+
+    + I love this package so far! Had too much fun playing with it. 
+    + I loaded up some simpler data for the example, to make it even easier for people to get going. 
+    + I made a separate function to calculate penalties for few reasons: 1) for me, it helped to solidify that the penalties are an important piece of the objective function, 2) it 'forces' the user to look at the penalties, instead of just running the function, 3) it makes it easier for me to tweak the penalties.
+    + I added a new penalties_by_comp function that the user can run and display what's causing the penalties, so the user can see what's causing the penalty and potentially tweak before running the maximizer.
+    + General comment: I tried to make it so could pass a tibble of parameters. This required a nested list column, not ideal but a start. No substantive reason to do this except a lot of people work in tibbles nowadays. 
+    + Other than that, I just played with some structure and different ways of passing data.
+    + Added a simple ggplot visualization
+
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+# Install package from my local
+# install.packages("portOptimizer_0.0.0.9002.tar.gz", repos = NULL)
+library(portOptimizer)
+library(tidyquant)
+library(tidyverse)
+
+```
+
+### Load data
+
+```{r}
+# load("~/rex-portf-optimizer/portOptimizer/data/rafi_201811.rdata")
+# JKR note: For the base intro vignette, let's make it sooooo simple. 
+# We can explain where the data came from - RAFI - but how about name the data as `expected_return` and `expected_covariance`. Also, for the first vignette, we need only asset class, returns and covariance. 
+
+load("expected_return.RData")
+load("expected_covariance.RData")
+
+```
+
+### Peek at expected returns
+
+```{r}
+expected_return %>% 
+  head()
+```
+
+### Peak at the covariances
+
+```{r}
+expected_covariance %>% 
+  head()
+```
+
+### Create our ingredient functions
+
+These are the functions that will be inside our objective functions. They are the ingredients.
+
+```{r}
+calc_port_return <- function(asset_weights, expectedReturns){
+  sum(asset_weights * expectedReturns)
+}
+
+calc_port_risk <- function(asset_weights, expectedCov){  # used to calculate tracking error also
+  as.numeric(t(asset_weights) %*% expectedCov %*% asset_weights) ^ 0.5
+}
+
+calc_nnonzeroassets <- function(asset_weights){
+  sum(asset_weights != 0)
+}
+
+```
+
+### Create a penalties function
+
+Rex, I pulled out penalties and made it a separate function. For me, it helped to establish the idea that these penalties are a driving force of the objective function. I didn't have this in mind, but it allows the user to run just the penalties and see the result.
+
+```{r}
+
+penalties_jkr <- function(asset_weights, expectedCov, bench_weights, optParams){
+  # Pass in our previously defined functions
+  port_risk <- calc_port_risk(asset_weights, expectedCov)
+  port_TE <- calc_port_risk(asset_weights - bench_weights, expectedCov)
+  nnonzeroassets <- calc_nnonzeroassets(asset_weights)
+  
+  # Set up our penalties
+  penalties <- (ifelse(port_risk <= optParams$maxRisk, 0, (port_risk - optParams$maxRisk)^2)  + 
+               ifelse(port_TE <= optParams$max_track_error, 0, 
+                      (port_TE - optParams$max_track_error)^2)  + 
+               ifelse(nnonzeroassets >= optParams$minNAssets, 0, 
+                      (nnonzeroassets - optParams$minNAssets)^2) +
+               ifelse(nnonzeroassets <= optParams$maxNAssets, 0, 
+                      (nnonzeroassets - optParams$maxNAssets)^2)) * optParams$penaltyFactor
+}
+# penalties(asset_weights, cov_matrix, bench_weights, optParams_tibble) %>% 
+#   print()
+```
+
+
+Let's also make a function that displays what is causing the penalty, if any.
+
+Note to Rex: This function can't be passed to the optimizer because it, evidently, requires a lot of loops to build this tibble. I tried to pass it to the optimizer and it throttled my CPU beyond 100%.
+
+```{r}
+penalties_by_comp <- function(asset_weights, expectedCov, bench_weights, optParams){
+  # Pass in our previously defined functions
+  port_risk <- calc_port_risk(asset_weights, expectedCov)
+  port_tracking_error <- calc_port_risk(asset_weights - bench_weights, expectedCov)
+  nnonzeroassets <- calc_nnonzeroassets(asset_weights)
+  
+  # Set up our penalties
+  penalties <- tibble(
+    port_risk_penalty = if_else(port_risk <= optParams$maxRisk, 0, (port_risk - optParams$maxRisk)^2),
+    port_tracking_error_penalty = if_else(port_tracking_error <= optParams$max_track_error, 0, 
+                             (port_tracking_error - optParams$max_track_error)^2),
+    min_assets_penalty = if_else(nnonzeroassets >= optParams$minNAssets, 0, 
+                      (nnonzeroassets - optParams$minNAssets)^2),
+    max_assets_penalty = if_else(nnonzeroassets <= optParams$maxNAssets, 0, 
+                      (nnonzeroassets - optParams$maxNAssets)^2)
+    ) %>%
+    mutate(total_penalty = rowSums(select(., port_risk_penalty:max_assets_penalty)),
+           penalty_factor = total_penalty * optParams$penaltyFactor) 
+    
+    
+}
+```
+
+
+### Create our objective function
+
+```{r}
+# Hi Rex, a slight issue: if the objective function's first argument is not named 'x', the optimizer seems to break. I took a quick look and there are lot of x <- and x = in the optimizer and I can't where the error is. 
+# Not a huge deal, but we'd need to document the first argument must be called 'x' and it's the asset weights.
+calculate_my_objective_value_jkr <- function(x, expectedReturns, expectedCov, bench_weights, optParams){
+  port_return <- calc_port_return(x, expectedReturns)
+  port_risk <- calc_port_risk(x, expectedCov) 
+  port_TE <- calc_port_risk(x - bench_weights, expectedCov)
+  nnonzeroassets <- calc_nnonzeroassets(x)
+  penalties <- penalties_jkr(x, expectedCov, bench_weights, optParams)
+  
+  return(port_return - penalties)
+}
+```
+
+
+### Create data objects
+
+Now let's create some data objects that will eventually be passed to our objective function.
+
+We need: 
+
+    + the number of assets
+    + the upper and lower bound of weights for each asset
+    + benchmark weights for the tracking error
+    + parameters
+
+```{r}
+num_of_assets <- nrow(expected_return)
+
+asset_weights <- rep(1/num_of_assets, num_of_assets)
+
+# upper and lower bounds is where we decide about leverage and shorting. right?
+lower_bound <- rep(0, num_of_assets)
+upper_bound <- rep(1, num_of_assets)
+
+# Let's set our benchmark weightings. These are used for the tracking error. 
+# We'll calculate the risk of a portfolio at these benchmark weights, 
+# then penalize our portfolio if it exceeds the risk of that benchmark
+# portfolio by a certain amount. The amount by which it exceeds the benchmark is our
+# 'tracking error'.
+bench_weights <- 
+  expected_return %>%  
+  mutate(bench_weights = case_when(asset_class == "US Large" ~ .36,
+                                   asset_class == "EAFE" ~ .15,
+                                   asset_class == "Emerging Markets" ~ .09,
+                                   asset_class == "US Aggregate" ~ .4,
+                                   # The next line sets all other bench_weights to 0
+                                   TRUE ~ 0)) %>%
+  # Use pull() to extract `bench_weights` as a vector
+  pull(bench_weights)
+
+# Convert covariance tibble to a matrix
+cov_matrix <- expected_covariance %>% 
+  select(-asset_class) %>% 
+  as.matrix()
+
+
+# Here we set our optional parameters. 
+# The max risk is calculated as the risk of our benchmark portfolio
+# which in turn depends on the benchmark weights we chose above.
+optParams_list <- 
+  list(maxRisk = calc_port_risk(bench_weights, cov_matrix),
+      max_track_error = 0.03,
+      minNAssets = 3,
+      maxNAssets = 10,
+      penaltyFactor = 25e9,
+      lower_bound = lower_bound,
+      upper_bound = upper_bound)
+
+optParams_tibble <- 
+  tibble(maxRisk = calc_port_risk(bench_weights, cov_matrix),
+      max_track_error = 0.03,
+      minNAssets = 3,
+      maxNAssets = 10,
+      penaltyFactor = 25e9,
+      lower_bound = lower_bound,
+      upper_bound = upper_bound) %>% 
+  nest(lower_bound, upper_bound)
+```
+
+### Pass our data to our objective function
+
+```{r objectiveExample1}
+# This is the value of the objective function
+calculate_my_objective_value_jkr(asset_weights, 
+                             expected_return$exp_return, 
+                             cov_matrix,
+                             bench_weights, 
+                             optParams_list)
+```
+
+A huge negative number! Let's check out penalties: 
+
+```{r}
+penalties_by_comp(asset_weights, cov_matrix, bench_weights, optParams_list) %>% 
+  glimpse()
+
+```
+
+We can see it was the max assets penalty that hurt us here. Now we could go back and change that before hitting the heavy maximization function.  But, onwards!
+
+### Pass our data and our objective function to the optimizer
+
+This will return weights of the optimized portfolio, given our constraints, as well as the expected return of that portfolio.
+
+```{r}
+results_jkr <- maximize_objective(asset_weights, 
+                   optParams_list$lower_bound,
+                   optParams_list$upper_bound,
+                   calculate_my_objective_value_jkr,
+                   expected_return$exp_return,
+                   cov_matrix,
+                   bench_weights,
+                   optParams_list)
+
+# Hi Rex, here is passing in a tibble. 
+# The ideal would be to figure out a way to not have to nest the upper and lower bound data
+# but this is a start.
+results_jkr_tibbled <- maximize_objective(asset_weights, 
+                   optParams_tibble$data[[1]]$lower_bound,
+                   optParams_tibble$data[[1]]$upper_bound,
+                   calculate_my_objective_value_jkr,
+                   expected_return$exp_return,
+                   cov_matrix,
+                   bench_weights,
+                   optParams_tibble)
+
+
+
+```
+
+
+### Add the optimal portfolio weights to our returns object
+
+```{r}
+expected_return %>% 
+  mutate(optim_weights = results_jkr$x)
+
+```
+
+### Calculate the contribution to return of each of our assets
+
+Start with our original `expected_return` object. Add the optimal weights that the optimizer just calculated. most will be zero since we started with 27 but need to have a max of 10 to avoid a penalty.
+
+```{r}
+expected_return %>% 
+  mutate(optim_weights = results_jkr$x,
+         return_contrib = exp_return * optim_weights)
+
+```
+
+### Confirm same results from the tibbled version
+
+```{r}
+expected_return %>% 
+  mutate(optim_weights = results_jkr_tibbled$x,
+         return_contrib = exp_return * optim_weights) 
+```
+
+
+Let's visualize the optimal weights. Think about other ways to convey this as well. Rex, I personally love it when vignettes contain visualizations so people can start to envision more and more creative stuff.
+
+```{r}
+expected_return %>% 
+  mutate(optim_weights = results_jkr$x,
+         return_contrib = exp_return * optim_weights) %>% 
+  ggplot(aes(x = asset_class, y = optim_weights, color = asset_class)) +
+  geom_point(show.legend = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  labs(y = "optimal weights", x = "")
+  
+
+```
+
+### Calculate the expected return of our optimized portfolio
+
+```{r}
+expected_return %>% 
+  mutate(optim_weights = results_jkr$x,
+         return_contrib = exp_return * optim_weights) %>% 
+  summarise(optim_port_return = sum(return_contrib))
+```
+
+Confirm it's the same as the MaxObj returned by the function.
+
+```{r}
+results_jkr$MaxObj
+```
+
