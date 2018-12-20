@@ -1,0 +1,30 @@
+---
+title: "portOptimizer Project Journal"
+output: html_notebook
+---
+
+2018-12-16 RPM Thoughts on objective function
+Can we make a function that builds the objective function?  Perhaps the user can provide a table (or list)  that includes a name, function name, parameters for the function besides x, a min, a max, and a sign and that's all that's needed for the objective function.  To see if that might work, here are some descriptions of ideas
+* Expected Return: expected returns
+* Expected Risk: covariance (or correlations and standard deviations)
+* Number of non-zero asset classes: 
+* Min non-zero wt: box minimums
+* Group constraints / User defined constraints / general constraints: coefficients
+* Benchmark relative: If user defines a benchmark (vector of weights) then constraint might be relative to benchmark
+  + function would be calculated at benchmark wts.  The min and max would be added to this value
+
+
+2018-12-13  RPM
+I thought this notebook might be a good place to keep track of ideas, todos etc.   At this point, we have the main function `maximize_objective` which finds a vector of weights x to maximize a user-supplied objective function.  The vignette example1.rmd demonstrates how it might be used.
+
+Can Jonathan use it, install it, understand it?  If not it needs more work.  Assuming it's ok so far:
+Where do we go from here?  At what point might we want to "release" or share it?  
+I could show more and more complicated problems such as group constraints, constraints from files.  
+
+Could describe how to create a minimum variance portfolio - simply a different objective function that returns a negative of the portfolio risk. Could describe how to create a maximum return portfolio - set the allowable risk to a huge number.  Then we could create an efficient frontier by creating portfolios between the two.  
+
+A big question is whether the package could make it easier for the user to "build" the objective function.  Perhaps it would be a tidy solution where each constraint is added via a pipe.  I don't know how to do this.
+
+Think about whether and how to expose maxdelta.  
+
+Under the hood documentation? How it works?

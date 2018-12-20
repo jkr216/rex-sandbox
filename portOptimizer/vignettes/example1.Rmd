@@ -1,10 +1,10 @@
 ---
-title: "portOptimizer Example 1"
-author: "Vignette Author"
+title: "portOptimizer Example: Build objective function from scratch"
+author: "Rex Macey"
 date: "`r Sys.Date()`"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteIndexEntry{portOptimizer: Build objective function from scratch}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -79,19 +79,6 @@ Rather than write one really big objective function, we will break it into small
 The objective function must have a parameter x which are the portfolio weights. 
 
 ```{r createobjectivefunction}
-
-calc_port_return <- function(x, expectedReturns){
-  sum(x * expectedReturns)
-}
-
-calc_port_risk <- function(x, expectedCov){  # used to calculate tracking error also
-  as.numeric(t(x) %*% expectedCov %*% x) ^ 0.5
-}
-
-calc_nnonzeroassets <- function(x){
-  sum(x != 0)
-}
-
 calculate_my_objective_value <- function(x, expectedReturns, expectedCov, benchX, optParams){
   port_return <- calc_port_return(x, expectedReturns)
   port_risk <- calc_port_risk(x, expectedCov) 
@@ -117,7 +104,8 @@ UB <- rep(1, nrow(data$expected.returns)) # upper bounds
 benchX <- rep(0, nrow(data$expected.returns))
 names(benchX) <- data$expected.returns$`Asset Class`
 benchX[c('US Large', 'EAFE', 'Emerging Markets', 'US Aggregate')] <- c(0.36, 0.15, 0.09, 0.4)
-optParams <- list(maxTE = 0.03, minNAssets = 3, maxNAssets = 10, LB=LB, UB=UB, penaltyFactor = 25e9)
+optParams <- list(maxTE = 0.03, minNAssets = 3, maxNAssets = 10, LB=LB, UB=UB, 
+                  penaltyFactor = 25e9)
 # We use the risk of the benchmark as the maxRisk paramater
 optParams$maxRisk <- calc_port_risk(benchX, as.matrix(data$expected.cov[,-1]))
 

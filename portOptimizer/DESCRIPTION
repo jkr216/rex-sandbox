@@ -1,6 +1,6 @@
 Package: portOptimizer
 Title: What the Package Does (one line, title case)
-Version: 0.0.0.9002
+Version: 0.0.0.9005
 Authors@R: person("Rex", "Macey", email = "rex@macey.us", role = c("aut", "cre"))
 Description: Portfolio optimization given complex (non-linear) objectives and or constraints.
 Depends: R (>= 3.5.1)
@@ -9,5 +9,7 @@ Encoding: UTF-8
 LazyData: true
 Suggests: 
     knitr,
-    rmarkdown
+    rmarkdown,
+    tibble
 VignetteBuilder: knitr
+RoxygenNote: 6.1.1

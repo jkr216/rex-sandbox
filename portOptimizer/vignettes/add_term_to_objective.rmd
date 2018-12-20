@@ -1,0 +1,378 @@
+---
+title: "Objective Function Builder"
+author: "Red Tortoise, LLC"
+date: "December 18, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(magrittr)
+library(knitr)
+library(kableExtra)
+library(portOptimizer)
+assign("data", rafi_201811)
+```
+
+## Overview
+
+This document describes how an objective function might be built programmatically.  Consider the following generalization of an objective function.  
+
+The objective function has **terms**.  Each **term** in the objective function is a function of x. For example, we might have    
+* f1.value = f1(x, params1) # this could be expected return    
+* f2.value = f2(x, params2) # this could be expected risk    
+* ... more functions    
+* fn.value = fn(x, paramsN) # this could be the number of non-zero weights.    
+
+The objective function might look something like the following.  In this case the first term might be called an `objective` and the others `contraints`. The constraints are aggregated to calculate the penalty.    
+= objective - penalty     
+= f1.value +     
+  (ifelse(f2.value >= f2.min, 0, (f2 - min1) ^ 2) +    
+  ifelse(f2.value <= f2.max, 0, (f2 - max1) ^ 2) +    
+  ... more terms here +    
+  ifelse(fn.value >= fn.min, 0, (fn - minN) ^ 2) +    
+  ifelse(fn.value <= fn.max, 0, (fn - maxN) ^ 2)) * 25000000000    
+  
+For now, I'll call a function add_term_to_objective.  It has the following parameters    
+
+* `name`: A description.  This might not be needed, but might help if we want to provide a breakdown of each term's contribution to the objective function. 
+* `type` Either maximize, minimize, or contraint. If a constraint, then the `min` and/or `max` should come into play.
+* `funName`: The function (or maybe its name). This would be the f1, f2, ..., fn which might be to calculate portfolio return.
+* `params`: The (not x) parameters needed by the `function`.  All functions will need the weights (x). We assume that's the first parameter and it should be ommitted.   
+* `min`: Minimum allowed value for constraints. Default is -Inf.  Ignored if -Inf.
+* `max`: Maximum allowed value for constraints. Default is Inf. Ignored if Inf.
+* `benchX` Weights of a benchmark portfolio.  Default is NULL.  Ignored if NULL. Should be same length as x (number of asset classes).  If not NULL, `min` and `max` are adjusted by the `function` called with benchX weights.  Here's the idea.  Let's say you want to constrain the portfolio risk to be no more than the risk of the benchmark.  First, we calculate the portfolio risk of the benchmark (e.g. 0.16).  `max` should be set as 0.  So the `max` in the objective function will be 0.16 + 0.
+* `penaltyFactor` Default is 25000000.  Value by which square of errors are multiplied.
+
+## Pseudo code
+The following function would return a function with the first parameter x    
+make_function <- function(x, args, body, env = parent.frame()) {    
+  args <- as.pairlist(args)     
+  eval(call("function", c(x, args), body), env)    
+}    
+ 
+Note .fun in the parameters is for piping a partially built function     
+
+add_term_to_objective <- function(.fun, name, type, funName, params, min=-Inf, max=Inf, benchX=NULL, penaltyFactor=25e9){    
+ f <- make_function(x, params, funName) # funName called with parameters    
+ if(type=="maximize") newTerm <- f # funName called with parameters    
+ if(type=="minimize") newTerm <- f * -1 # negative of funName called with parameters    
+ 
+ if(type=="constraint") { # add ifelse terms    
+    if(min > -Inf){   
+      adjmin <- min + ifelse(is.null(benchX), 0, make_function(benchx, params, funName))    
+      newTermMin = ifelse(f > adjmin, 0, (f-adjmin) ^ 2 * penaltyFactor)    
+    }    
+    if(max < Inf){    
+      adjmax <- max + ifelse(is.null(benchX), 0, make_function(benchx, params, funName))    
+      newTermMax = ifelse(f < adjmax, 0, (f-adjmax) ^ 2 * penaltyFactor)    
+    }    
+    newTerm <- ifelse(min > -Inf, newTermMin) + ifelse(max < Inf, newTermMax)     
+ }    
+ if(is.missing(.fun)){    
+  return(newTerm)    
+ } else {    
+  return(.fun + newTerm)    
+ }    
+}    
+
+## Examples calls    
+* maximized expected Return: add_term_to_objective(name=:="ExpectedReturn",     
+                                type="maximize",     
+                                funName=port_expected_return,     
+                                params=data$expectedreturn)    
+* Expected Risk:  add_term_to_objective(name=:="ExpectedRisk",     
+                                type="constraint",     
+                                funName=port_expected_risk,     
+                                params=data$expectedcov,   
+                                min=0,     
+                                max=0,    
+                                benchX=benchX)  
+
+## Other    
+It may be that the user calls this function several times, once for each term of the objective function using a pipe (%>%) operator.  Or perhaps the user can provide a table (or list)  that includes a row for each term and the objective function is built with the apply function.
+
+
+## Build a data.frame to work with
+* `name`: A description.  This might not be needed, but might help if we want to provide a breakdown of each term's contribution to the objective function. 
+* `type` Either maximize, minimize, or contraint. If a constraint, then the `min` and/or `max` should come into play.
+* `funName`: The function (or maybe its name). This would be the f1, f2, ..., fn which might be to calculate portfolio return.
+* `params`: The (not x) parameters needed by the `function`.  All functions will need the weights (x). Assume that's the first parameter and can is ommitted.   
+* `min`: Minimum allowed value for constraints. Default is -Inf.  Ignored if -Inf.
+* `max`: Maximum allowed value for constraints. Default is Inf. Ignored if Inf.
+
+
+
+* `benchX` Weights of a benchmark portfolio.  Default is NULL.  Ignored if NULL. Should be same length as x (number of asset classes).  If not NULL, `min` and `max` are adjusted by the `function` called with benchX weights.  Here's the idea.  Let's say you want to constrain the portfolio risk to be no more than the risk of the benchmark.  First, we calculate the portfolio risk of the benchmark (e.g. 0.16).  `max` should be set as 0.  So the `max` in the objective function will be 0.16 + 0.
+* `penaltyFactor` Default is 25000000.  Value by which square of errors are multiplied.
+
+
+```{r}
+benchX <- rep(0, nrow(data$expected.returns))
+names(benchX) <- data$expected.returns$`Asset Class`
+benchX[c('US Large', 'EAFE', 'Emerging Markets', 'US Aggregate')] <- c(0.36, 0.15, 0.09, 0.4)
+
+LB <- rep(0, nrow(data$expected.returns))
+names(LB) <- data$expected.returns$`Asset Class`
+LB["United States Cash"] <- .02
+
+UB <- rep(1, nrow(data$expected.returns))
+names(LB) <- data$expected.returns$`Asset Class`
+
+curX <- rep(0, nrow(data$expected.returns))
+names(curX) <- data$expected.returns$`Asset Class`
+curX["United States Cash"] <- 1
+
+names.equity <- c("US Large", "US Small", "All country", "EAFE", "Emerging Markets", "Commodities", "REITS",
+                 "US Commercial Real Estate")
+names.fixed <- c("US Aggregate", "US Treasury Intermediate", "US Treasury Long", "US Treasury Short",
+                "US Corporate Intermediate", "US Tips", "United States Cash") 
+names.other <- c("Global Aggregate", "Global Ex-US Treasury", "Emerging Market (Local)", "Emerging Market (Non-Local)",
+                "Global Ex-US Corporates", "Bank Loans", "US High Yield", "EM Cash", "Global DM Ex-US Long/Short Equity",
+                "US Long/Short Equity", "Europe LBO", "US LBO") 
+wts.equity <- numeric(nrow(data$expected.returns))
+wts.equity[which(data$expected.returns$`Asset Class` %in% names.equity)] <- 1
+wts.fixed <- numeric(nrow(data$expected.returns))
+wts.fixed[which(data$expected.returns$`Asset Class` %in% names.fixed)] <- 1
+wts.other <- numeric(nrow(data$expected.returns))
+wts.other[which(data$expected.returns$`Asset Class` %in% names.other)] <- 1
+
+wts.USLRelUS <- rep(0, nrow(data$expected.returns))
+names(wts.USLRelUS) <- data$expected.returns$`Asset Class`
+wts.USLRelUS[c('US Large', 'US Small')] <- c(0.25, -0.7)
+```
+
+
+```{r portfolioFunctions}
+calc_port_return <- function(x, expectedReturns){
+  sum(x * expectedReturns)
+}
+
+calc_port_risk <- function(x, expectedCov){  # used to calculate tracking error also
+  as.numeric(t(x) %*% expectedCov %*% x) ^ 0.5
+}
+
+calc_port_TE <- function(x, benchX, expectedCov){
+  calc_port_risk(x - benchX, expectedCov)
+}
+
+calc_nnonzeroassets <- function(x){
+  sum(x != 0)
+}
+
+calc_weighted <- function(x, weights){
+  sum(x * weights)
+}
+
+calc_turnover <- function(x, curWeights){
+  sum(abs(x - curWeights))/2
+}
+
+# following works for long-only and would need to be modified for long-short
+calc_min_nonzero_weight <- function(x, LB){
+  if(missing(LB)){
+    return(min(x[x>0]))
+  } else {
+    return(min(x[LB == 0 & x > 0]))
+  }
+}
+```
+
+
+```{r buildObjDefinitionFunction}
+addTermToObjective <- function(.lst, name = "", type = "constraint", funName, params = list(x), min = -Inf,
+                               max = Inf){
+  type <- tolower(type)
+  if(!(type %in% c("maximize", "minimize", "constraint"))) error('type not in c("maximize", "minimize", "constraint")')
+  l <- list(name = name,
+            type = type,
+            funName = funName,
+            params = params,
+            min = min,
+            max = max)
+  if(missing(.lst)) {
+    return(list(l))
+  } else {
+      return(c(.lst, list(l)))
+    }
+}
+
+addTermToObjective2 <- function(.lst, name = "", type = "constraint", funName, params = list(x), min = -Inf,
+                               max = Inf, benchX = NULL){
+  type <- tolower(type)
+  if(!(type %in% c("maximize", "minimize", "constraint"))) error('type not in c("maximize", "minimize", "constraint")')
+  l <- list(name = name,
+            type = type,
+            funName = funName,
+            params = params,
+            min = min,
+            max = max,
+            benchX = benchX)
+  if(missing(.lst)) {
+    return(list(l))
+  } else {
+      return(c(.lst, list(l)))
+    }
+}
+```
+
+```{r}
+x <- rep(1/27, 27)
+obj_def1 <- list(
+  list(name = "MaxReturn",
+             type = "maximize",
+             funName = calc_port_return,
+             params = list(data$expected.returns$`Expected Return (Nominal)`)),
+  list(name = "MaxReturn",
+             type = "maximize",
+             funName = calc_port_return,
+             params = list(data$expected.returns$`Expected Return (Nominal)`)),
+  list(name = "MinReturn",
+             type = "minimize",
+             funName = calc_port_return,
+             params = list(data$expected.returns$`Expected Return (Nominal)`)),
+  list(name = "Risk",
+             type = "constraint",
+             funName = calc_port_risk,
+             params = list(as.matrix(data$expected.cov[,-1])),
+             min = -Inf,
+             max = 0,
+             benchX = benchX)
+)
+```
+
+In the following objective definition: 
+* MaxReturn: maximizes the expected returns
+* Risk: risk should not be more than the risk of benchX. Note how the max is set to the risk of the benchmark
+* TrackingError: tracking error should not be more the 0.03
+* NAssets: number of assets should be between 3 and 10. Note the empty params list, and use of both min and max.
+* MinNonZeroWt: minimum non-zero weight should be at least 0.03 for all assets with a LB = 0. 
+* Turnover: maximum of 100% (which could be ignored but is shown for illustratation)
+* RelWtsEquity: Sum of equity weights should be within 10% of benchmarket weights
+* RelWtsUSFixed: Sum of US Fixed Income and Cash should be within 10% of benchmarket weights
+* RelWtsOther: Sum of other assets should be within 10% of benchmarket weights
+* WtsUSFixed: Sum of US Fixed Income and Cash should be at least 10%
+* USLRelUS: US large should be at least 75% of US Large + US Small equity.  This type of constraint requires a bit of creativity. We want:
+ - USL / (USL + USS) >= 0.75  (where USL is US Large and USS is US Small)
+ - USL >= 0.75USL + 0.75USS so
+ - 0.25USL - 0.75USS >= 0.  
+ for this constraint we create a vector of coefficients (weights) with +0.25 for USL, -0.75 for USS, and 0 for the others.
+
+
+
+Not part of the objective definition:
+* x: Initial weights. Must sum to whatever value is desired (e.g., 1.0)
+* LB: Lower bound weights for each asset
+* UB: Upper bound weights for each asset
+
+
+```{r}
+obj_def2 <- addTermToObjective(name = "MaxReturn", 
+                               type="maximize", 
+                               funName=calc_port_return,
+                               params = list(data$expected.returns$`Expected Return (Nominal)`)) %>%
+            addTermToObjective(name = "Risk",
+                               type = "constraint",
+                               funName = calc_port_risk,
+                               params = list(as.matrix(data$expected.cov[,-1])),
+                               min = -Inf,
+                               max = calc_port_risk(benchX, as.matrix(data$expected.cov[,-1])),
+                               benchX = benchX)  %>%
+            addTermToObjective(name = "TrackingError",
+                               type = "constraint",
+                               funName = calc_port_TE,
+                               params = list(benchX, as.matrix(data$expected.cov[,-1])),
+                               min = -Inf,
+                               max = 0.03) %>%
+            addTermToObjective(name = "NAssets",
+                               type = "constraint",
+                               funName = calc_nnonzeroassets,
+                               params = list(),
+                               min = 3,
+                               max = 10) %>%
+           addTermToObjective(name = "MinNonZeroWt",
+                              type = "constraint",
+                              funName = calc_min_nonzero_weight,
+                              params = list(LB),
+                              min = -Inf,
+                              max = 0.03) %>%
+          addTermToObjective(name = "Turnover",
+                              type = "constraint",
+                              funName = calc_turnover,
+                              params = list(),
+                              min = -Inf,
+                              max = 0.03) %>%
+          addTermToObjective(name = "RelWtsEquity",
+                              type = "constraint",
+                              funName = calc_weighted,
+                              params = list(wts.equity),
+                              min = sum(benchX[wts.equity]) - 0.1,
+                              max = sum(benchX[wts.equity]) + 0.1) %>%
+          addTermToObjective(name = "RelWtsFixed",
+                              type = "constraint",
+                              funName = calc_weighted,
+                              params = list(wts.fixed),
+                              min = sum(benchX[wts.fixed]) - 0.1,
+                              max = sum(benchX[wts.fixed]) + 0.1) %>%
+          addTermToObjective(name = "RelWtsOther",
+                              type = "constraint",
+                              funName = calc_weighted,
+                              params = list(wts.other),
+                              min = sum(benchX[wts.other]) - 0.1,
+                              max = sum(benchX[wts.other]) + 0.1) %>%
+          addTermToObjective(name = "WtsFixed",
+                              type = "constraint",
+                              funName = calc_weighted,
+                              params = list(wts.fixed),
+                              min = 0.1,
+                              max = Inf)  %>%
+          addTermToObjective(name = "USLRelUS",
+                              type = "constraint",
+                              funName = calc_weighted,
+                              params = list(wts.USLRelUS),
+                              min = 0,
+                              max = Inf) 
+  
+```
+
+```{r }
+
+
+calc_maxmin <- function(obj, x){
+  do.call(obj$funName, c(list(x),obj$params))  
+}
+
+calc_constraint <- function(obj, x){
+  v <- do.call(obj$funName, c(list(x),obj$params))
+  return(ifelse(v >= obj$min, 0, (v - obj$min) ^2) +
+  ifelse(v <= obj$max, 0, (v - obj$max) ^2))
+}
+
+calc_constraint2 <- function(obj, x){
+  v <- do.call(obj$funName, c(list(x),obj$params))
+  if(!is.null(obj$benchX)){
+    b <- do.call(obj$funName, c(list(obj$benchX), obj$params))
+  } else {
+    b <- 0
+  }
+  return(ifelse(v >= obj$min + b, 0, (v - obj$min - b) ^2) +
+  ifelse(v <= obj$max + b, 0, (v - obj$max - b) ^2))
+}
+
+calc_obj <- function(x, obj_definition, penaltyFactor = 25e9){
+  constraints <- unlist(sapply(obj_definition, "[", "type"))  == "constraint"
+  maximize <- unlist(sapply(obj_definition, "[", "type"))  == "maximize"
+  minimize <- unlist(sapply(obj_definition, "[", "type"))  == "minimize"
+  sum_obj <- sum(sapply(obj_definition[maximize], calc_maxmin, x=x)) -
+          sum(sapply(obj_definition[minimize], calc_maxmin, x=x))
+  sum_penalties <- sum(sapply(obj_definition[constraints],calc_constraint, x=x))
+  return(sum_obj - sum_penalties * penaltyFactor)
+}
+
+calc_obj(x, obj_definition = obj_def1)
+
+calc_obj(x, obj_definition = obj_def2)
+```
+
+
+
