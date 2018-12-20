@@ -1,6 +1,6 @@
 Package: portOptimizer
 Title: Portfolio Optimization With Complex Objectives and or Constraints
-Version: 0.0.0.9008
+Version: 0.0.0.9009
 Authors@R: person("Rex", "Macey", email = "rex@macey.us", role = c("aut", "cre"))
 Description: Portfolio optimization given complex (non-linear) objectives and or constraints.
 Depends: R (>= 3.5.1)

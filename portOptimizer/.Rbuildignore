@@ -3,3 +3,6 @@
 ^portOptimizer\.Rproj$
 ^\.Rproj\.user$
 ^\R\importRAFI.r$
+^projectJournal.rmd$
+^projectJournal.nb.html$
+^\R\test_makefunctions.r$

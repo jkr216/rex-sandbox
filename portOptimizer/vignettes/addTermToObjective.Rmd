@@ -42,48 +42,47 @@ The objective function might look something like the following.  In this case th
 You may use any objective function so long as the first parameter is x and the function returns a scalar value.  The `portOptimizer` package includes the `add_term_to_objective` function to help create an objective function.
 
  `add_term_to_objective` has the following parameters     
-* `name`: A description.  This might not be needed, but might help if we want to provide a breakdown of each term's contribution to the objective function. 
-* `type` Either 'maximize', 'minimize', or 'contraint'. If a constraint, then the `min` and/or `max` should come into play.
-* `funName`: The function (or maybe its name). This would be the f1, f2, ..., fn which might be to calculate portfolio return.
-* `params`: The (not x) parameters needed by `funName`.  All functions will need the weights (x). We assume that's the first parameter and it should be ommitted from `params`.   
-* `min`: Minimum allowed value for constraints. Default is -Inf.  Ignored if -Inf.
-* `max`: Maximum allowed value for constraints. Default is Inf. Ignored if Inf.
+* `name`: A description.  This might not be needed, but might help if we want to provide a breakdown of each term's contribution to the objective function.     
+* `type` Either 'maximize', 'minimize', or 'contraint'. If a constraint, then the `min` and/or `max` should come into play.     
+* `funName`: The function (or maybe its name). This would be the f1, f2, ..., fn which might be to calculate portfolio return.    
+* `params`: The (not x) parameters needed by `funName`.  All functions will need the weights (x). We assume that's the first parameter and it should be ommitted from `params`.      
+* `min`: Minimum allowed value for constraints. Default is -Inf.  Ignored if -Inf.    
+* `max`: Maximum allowed value for constraints. Default is Inf. Ignored if Inf.    
 
-# Description of the Objedtive Function    
-In the following objective definition: 
-* MaxReturn: maximize the expected returns subject to the following constraints
-* Risk: risk should not be more than the risk of benchX. Note how the max is set to the risk of the benchmark
-* TrackingError: tracking error should not be more the 0.03
-* NAssets: number of assets should be between 3 and 10. Note the empty params list, and use of both min and max.
-* MinNonZeroWt: minimum non-zero weight should be at least 0.03 for all assets with a LB = 0. 
-* Turnover: maximum of 100% (which could be ignored but is shown for illustratation)
-* RelWtsEquity: Sum of equity weights should be within 10% of benchmarket weights
-* RelWtsUSFixed: Sum of US Fixed Income and Cash should be within 10% of benchmarket weights
-* RelWtsOther: Sum of other assets should be within 10% of benchmarket weights
-* WtsUSFixed: Sum of US Fixed Income and Cash should be at least 10%
-* USLRelUS: US large should be at least 75% of US Large + US Small equity.  This type of constraint requires a bit of creativity. We want:
- - USL / (USL + USS) >= 0.75  (where USL is US Large and USS is US Small)
- - USL >= 0.75USL + 0.75USS so
- - 0.25USL - 0.75USS >= 0.  
- for this constraint we create a vector of coefficients (weights) with +0.25 for USL, -0.75 for USS, and 0 for the others.
+# Description of the Objective Function    
+In this example we want the following terms in the objective definition:     
+* MaxReturn: maximize the expected returns subject to the following constraints    
+* Risk: risk should not be more than the risk of benchX. Note how the max is set to the risk of the benchmark    
+* TrackingError: tracking error should not be more the 0.03    
+* NAssets: number of assets should be between 3 and 10. Note the empty params list, and use of both min and max.    
+* MinNonZeroWt: minimum non-zero weight should be at least 0.03 for all assets with a LB = 0.     
+* Turnover: maximum of 100% (which could be ignored but is shown for illustratation)    
+* RelWtsEquity: Sum of equity weights should be within 10% of benchmarket weights    
+* RelWtsUSFixed: Sum of US Fixed Income and Cash should be within 10% of benchmarket weights    
+* RelWtsOther: Sum of other assets should be within 10% of benchmarket weights    
+* WtsUSFixed: Sum of US Fixed Income and Cash should be at least 10%    
+* USLRelUS: US large should be at least 75% of US Large + US Small equity.  This type of constraint requires a bit of creativity. We want:    
+ - USL / (USL + USS) >= 0.75  (where USL is US Large and USS is US Small)    
+ - USL >= 0.75USL + 0.75USS so    
+ - 0.25USL - 0.75USS >= 0.      
+ for this constraint we create a vector of coefficients (weights) with +0.25 for USL, -0.75 for USS, and 0 for the others.    
 
 ##  The following are not part of the objective definition but will be needed:    
 * x: Initial weights. Must sum to whatever value is desired (e.g., 1.0)
 * LB: Lower bound weights for each asset
 * UB: Upper bound weights for each asset
 
-# Defining portfolio functions of x
-These functions are included in the package.  User defined / custom functions may be used as well. The first parameter should
-be x, a vector of portfolio weights.    
-* calc_port_return 
-* calc_port_risk
-* calc_port_TE
-* calc_nnonzeroassets
-* calc_weighted
-* calc_turnover
-* calc_min_nonzero_weight
+# The portfolio functions    
+These functions are included in the package.  User defined / custom functions may be used as well. The first parameter should be x, a vector of portfolio weights.    
+* calc_port_return     
+* calc_port_risk    
+* calc_port_TE    
+* calc_nnonzeroassets    
+* calc_weighted    
+* calc_turnover    
+* calc_min_nonzero_weight    
 
-The following loads and creates some data which will be used in the example
+The following code loads and creates some data which will be used in the example
 ```{r createData}
 assign("data", rafi_201811)
 
@@ -91,7 +90,7 @@ assign("data", rafi_201811)
 benchX <- rep(0, nrow(data$expected.returns))
 names(benchX) <- data$expected.returns$`Asset Class`
 benchX[c('US Large', 'EAFE', 'Emerging Markets', 'US Aggregate')] <- c(0.36, 0.15, 0.09, 0.4)
-benchX
+benchX[benchX > 0]
 
 # Lower and upper bounds
 LB <- rep(0, nrow(data$expected.returns))
@@ -106,7 +105,7 @@ curX <- rep(0, nrow(data$expected.returns))
 names(curX) <- data$expected.returns$`Asset Class`
 curX["United States Cash"] <- 1
 
-# definition of some groups
+# definition of some groups.  We use these to control the allocation to groups of assets (group constraints).
 names.equity <- c("US Large", "US Small", "All country", "EAFE", "Emerging Markets", "Commodities", "REITS",
                  "US Commercial Real Estate")
 names.fixed <- c("US Aggregate", "US Treasury Intermediate", "US Treasury Long", "US Treasury Short",
@@ -127,8 +126,8 @@ wts.USLRelUS[c('US Large', 'US Small')] <- c(0.25, -0.7)
 ```
 
 # Build objective functions    
-The following function `addTermToObjective` creates a list which defines a function, but does not create a function.  
-The `calc_objective` function takes x and an objective definition and returns the value of the objective. Thus `calc_objective` can be the objective function if you don't want to supply one.
+The function `addTermToObjective` creates a list which defines a function, but does not actually create a function.  
+The `calc_objective` function takes x and an objective definition and returns the value of the objective. Thus `calc_objective` can be the objective function if you don't want to build one.
 
 ## Example: Using `addTermToObjective` to create a function definition    
 ```{r}
