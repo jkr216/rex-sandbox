@@ -1,0 +1,195 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+# Install package from my local
+# install.packages("portOptimizer_0.0.0.9009.tar.gz", repos = NULL)
+
+library(portOptimizer)
+library(tidyquant)
+library(tidyverse)
+```
+
+```{r}
+# Rex, as before, I'm working with very simplified data here, reduced the RAFI down to just returns, assets, and added an asset class. 
+
+load("expected_return.RData")
+load("expected_covariance.RData")
+
+```
+
+
+```{r}
+expected_return %>% 
+  head()
+```
+
+Rex, I added the `asset_class` to my example data instead of making it part of the vignette (e.g. where you have the names.equity, names.other etc) because I think preprocessing the data should be done ahead of time and let users focus as much as possible on the package functionality. In short, we're saying, your returns object needs an asset name, and if you want to constrain by asset class, it also needs an `asset_class` column.
+
+
+```{r}
+
+
+bench_weights <- 
+  expected_return %>%  
+  mutate(bench_weights = case_when(asset == "US Large" ~ .36,
+                                   asset == "EAFE" ~ .15,
+                                   asset == "Emerging Markets" ~ .09,
+                                   asset == "US Aggregate" ~ .4,
+                                   # The next line sets all other bench_weights to 0
+                                   TRUE ~ 0)) %>%
+  select(asset, bench_weights) %>% 
+  deframe()
+
+
+
+lower_bound <-
+  expected_return %>% 
+  mutate(min = case_when(asset == "United States Cash" ~ .02,
+                         TRUE ~ 0)) %>% 
+  select(asset, min) %>% 
+  deframe()
+
+upper_bound <-
+  expected_return %>% 
+  mutate(max = 1) %>% 
+  select(asset, max) %>% 
+  deframe()
+
+
+num_of_assets <- nrow(expected_return)
+
+current_weights <- 
+  expected_return %>% 
+  mutate(min = case_when(asset == "United States Cash" ~ 1,
+                         TRUE ~ 0)) %>% 
+  select(asset, min) %>% 
+  deframe()
+
+equity_weights <- 
+  expected_return %>% 
+  mutate(weights = case_when(asset_class == "equity" ~ 1,
+                             TRUE ~ 0)) %>% 
+  select(asset, weights) %>% 
+  deframe()
+
+fixed_inc_weights <- 
+  expected_return %>% 
+  mutate(weights = case_when(asset_class == "fixed_income" ~ 1,
+                             TRUE ~ 0)) %>% 
+  select(asset, weights) %>% 
+  deframe()
+
+other_weights <- 
+  expected_return %>% 
+  mutate(weights = case_when(asset_class == "other" ~ 1,
+                             TRUE ~ 0)) %>% 
+  select(asset, weights) %>% 
+  deframe()
+
+us_large_relative_weights <- 
+  expected_return %>% 
+  mutate(min = case_when(asset == "US Large" ~ 0.25,
+                         asset == "US Small" ~ -0.75,
+                         TRUE ~ 0)) %>% 
+  select(asset, min) %>% 
+  deframe()
+
+cov_matrix <- expected_covariance %>% 
+  select(-asset_class) %>% 
+  as.matrix()
+
+
+```
+
+### Functions to add parameters
+
+Rex, possibly easier to discuss over the phone as this is a major major suggestion that you are free to reject with impunity, but: instead of using `addTermObjective` that is customizable, I created pre-built functions for adding common objectives. This can't be exhaustive, but I reckon we could cover the 20 - 30 most common parameters/constraints. These will be pre-built in the package, so the user doesn't have to do as much to build out his/her optimization recipe. 
+
+They can still build custom functions, same as before, but I think early adopters will start with the pre-built, and take it as far as possible with the pre-builts. Then once comfortable they can start to build customized constraints. 
+
+I placed the new functions in a script call 'new_functions.R'. 
+
+```{r}
+source("new_functions.R")
+```
+
+### Create the optimization recipe
+
+Here is where the user pipes in all the constraints/parameters and creates what I call the optimization recipe. That's terminology that Max and Davis use for their machine learning package. It's quirky but I like the recipe  idea because it emphasizes that these are the steps that must be followed, but the cake hasn't been made yet. No actual optimization has been done.
+
+Each of these functions would already be built and included in the package. The user needs to add in the data and a couple of parameters. `addTermObjective` is still perfectly viable in this pipe flow if the user wants to go custom. 
+
+
+
+```{r}
+optimization_recipe <- 
+  portfolio_return_max(returns = expected_return$exp_return) %>%
+  portfolio_risk_min(bench_weights, cov_matrix) %>% 
+  tracking_error(cov_matrix, bench_weights, max_track_error = .03) %>% 
+  total_assets(min = 3, max =  30) %>% 
+  minimum_nonzero_weight(lower_bound, min = .03) %>% 
+  turnover(current_weights, max = 1) %>% 
+  relative_weights_equity(equity_weights, bench_weights, slack = .1) %>% 
+  relative_weights_fixed_income(fixed_inc_weights, bench_weights, slack = .1) %>% 
+  relative_weights_other(other_weights, bench_weights, slack = .1) %>% 
+  weights_fi_cash(fixed_inc_weights, min = .1, max = .6) %>% 
+  weights_us_large_relative(us_large_relative_weights, min = 0, max = .75)
+```
+
+
+```{r}
+calc_objective(bench_weights, optimization_recipe)  
+calc_objective_terms(bench_weights, optimization_recipe)
+calc_objective(current_weights, optimization_recipe)
+calc_objective_terms(current_weights, optimization_recipe)
+```
+
+
+
+```{r}
+
+result_recipe <- 
+  maximize_objective(bench_weights,
+                     lower_bound,
+                     upper_bound,
+                     calc_objective,
+                     optimization_recipe)
+
+```
+
+
+
+```{r}
+calc_objective_terms(result_recipe$x, optimization_recipe) %>% 
+  filter(Type != 0)
+  #arrange(Type)
+```
+
+```{r}
+expected_return %>% 
+  mutate(optim_weights = result_recipe$x)
+```
+
+```{r}
+expected_return %>% 
+  mutate(optim_weights = result_recipe$x,
+         return_contrib = exp_return * optim_weights)
+
+```
+
+```{r}
+expected_return %>% 
+  mutate(optim_weights = result_recipe$x,
+         return_contrib = exp_return * optim_weights) %>% 
+  ggplot(aes(x = asset, y = optim_weights, color = asset)) +
+  geom_point(show.legend = FALSE) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+  labs(y = "optimal weights", x = "")
+  
+```
+
+
+
